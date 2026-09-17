@@ -1,56 +1,202 @@
-# Welcome to your Expo app 👋
+# Respiro - App de Apoyo al Cuidador
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Aplicación móvil desarrollada con React Native (Expo) y Supabase para la gestión y acompañamiento integral de cuidadores de personas mayores o en situación de dependencia.
 
-## Get started
+---
 
-1. Install dependencies
+## 1. Requisitos Previos
 
-   ```bash
-   npm install
-   ```
+Antes de comenzar, se debe contar con el siguiente entorno configurado en el equipo:
 
-2. Start the app
+* Node.js: Versión LTS recomendada (v18 o superior).
+* Git: Para clonar el repositorio y sincronizar ramas de trabajo.
+* Expo Go: Aplicación instalada en el teléfono móvil (disponible en Google Play Store y App Store).
+* VS Code (o editor de código de preferencia).
 
-   ```bash
-   npx expo start
-   ```
+---
 
-In the output, you'll find options to open the app in a
+## 2. Comandos de Instalación del Entorno
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
+Abre la terminal en la raíz de tu equipo y ejecuta los siguientes comandos en orden:
 
 ```bash
-npm run reset-project
+git clone <URL_DEL_REPOSITORIO>
+cd RESPIRO/app
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+Instalar las dependencias base del proyecto:
+```bash
+npm install
+```
 
-### Other setup steps
+Instalar el cliente de Supabase:
+```bash
+npm install @supabase/supabase-js
+```
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+Instalar las librerías nativas verificadas para Expo (evita problemas de compilación nativa):
+```bash
+npx expo install @react-native-async-storage/async-storage
+```
 
-## Learn more
+Instalar la librería de iconos vectoriales:
+```bash
+npx expo install @expo/vector-icons
+```
 
-To learn more about developing your project with Expo, look at the following resources:
+Instalar el sistema de navegación de Expo:
+```bash
+npx expo install expo-router react-native-safe-area-context react-native-screens expo-linking expo-constants expo-status-bar
+```
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+Alinear y corregir versiones de dependencias según el SDK de Expo instalado:
+```bash
+npx expo install --fix
+```
 
-## Join the community
+---
 
-Join our community of developers creating universal apps.
+## 3. Configuración del Cliente Supabase
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+El archivo `src/lib/supabase.ts` centraliza la conexión con la base de datos y la persistencia de sesión:
+
+```typescript
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { createClient } from '@supabase/supabase-js';
+
+const supabaseUrl = '[https://qhtdperoxxvcpmfcbcsi.supabase.co](https://qhtdperoxxvcpmfcbcsi.supabase.co)';
+const supabaseAnonKey =
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFodGRwZXJveHh2Y3BtZmNiY3NpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk1OTgwMzEsImV4cCI6MjEwNTE3NDAzMX0.gKgvYzVZVquOkCaxLUqoewRsWJoPFKpINfUSCsXU31E';
+
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    storage: AsyncStorage,
+    autoRefreshToken: true,
+    persistSession: true,
+    detectSessionInUrl: false,
+  },
+});
+```
+
+---
+
+## 4. Configuración de Supabase y Base de Datos (PostgreSQL)
+
+### Ajustes en el Panel de Supabase Authentication
+1. Entrar en la web de Supabase a **Authentication > Providers > Email**.
+2. **Enable Email provider:** Activado (ON).
+3. **Allow new users to sign up:** Activado (ON).
+4. **Allow Email logins:** Activado (ON).
+5. **Confirm email:** Desactivado (OFF) para permitir registros y pruebas directas en desarrollo.
+
+### Esquema de Tablas (Ejecutar en SQL Editor de Supabase)
+
+```sql
+-- Tabla: cuidadores
+create table cuidadores (
+  id uuid references auth.users on delete cascade primary key,
+  nombre text not null,
+  telefono text,
+  correo text unique not null,
+  especialidades text,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- Tabla: pacientes
+create table pacientes (
+  id uuid default gen_random_uuid() primary key,
+  cuidador_id uuid references cuidadores(id) on delete cascade,
+  nombre text not null,
+  edad integer not null,
+  rut text,
+  diagnostico text,
+  alergias text,
+  contacto_emergencia text,
+  telefono_emergencia text,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- Tabla: medicamentos
+create table medicamentos (
+  id uuid default gen_random_uuid() primary key,
+  paciente_id uuid references pacientes(id) on delete cascade,
+  nombre text not null,
+  dosis text not null,
+  horario text not null,
+  stock integer default 0,
+  tomado boolean default false,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+```
+
+### Cuenta de Acceso de Prueba
+* **Correo:** `admin@admin.com`
+* **Contraseña:** `admin123`
+
+---
+
+## 5. Comandos de Ejecución
+
+Para iniciar el servidor de desarrollo local:
+
+```bash
+npx expo start -c
+```
+
+Para ejecutar en modo túnel (permite que cualquiera pruebe la app desde otra red Wi-Fi o datos móviles):
+
+```bash
+npx expo start --tunnel
+```
+
+---
+
+## 6. Estructura de Archivos del Proyecto
+
+```text
+src/
+├── app/
+│   ├── _layout.tsx           # Guardián general de rutas y verificación de sesión
+│   ├── login.tsx             # Inicio de sesión y registro de cuidadores
+│   ├── ficha.tsx             # Formulario y detalle clínico del paciente
+│   ├── horas_medicas.tsx     # Agenda de citas médicas y controles
+│   ├── perfil.tsx            # Datos de la cuenta y botón de cerrar sesión
+│   └── (tabs)/               # Menú con pestañas fijas inferiores
+│       ├── _layout.tsx       # Configuración visual de la barra de pestañas
+│       ├── index.tsx         # Pantalla principal con accesos directos
+│       ├── pacientes.tsx     # Lista general de pacientes registrados
+│       ├── medicacion.tsx    # Control de tomas y stock de fármacos
+│       └── foro.tsx          # Comunidad y consultas de cuidadores
+└── lib/
+    └── supabase.ts           # Cliente configurado de Supabase
+```
+
+---
+
+## 7. Flujo de Trabajo con Git
+
+Para evitar conflictos en archivos compartidos, seguir estos pasos:
+
+1. Actualizar la rama principal antes de programar:
+```bash
+git checkout main
+git pull origin main
+```
+
+2. Crear una rama específica para la tarea asignada:
+```bash
+git checkout -b feature/nombre-de-la-pantalla
+```
+
+3. Guardar cambios con mensajes descriptivos:
+```bash
+git add .
+git commit -m "feat: agrega formulario en pantalla de pacientes"
+```
+
+4. Subir la rama al repositorio remoto:
+```bash
+git push origin feature/nombre-de-la-pantalla
+```
+
+5. Crear un Pull Request en GitHub para revisar y fusionar con main.
