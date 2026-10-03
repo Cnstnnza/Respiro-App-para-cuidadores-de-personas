@@ -70,15 +70,6 @@ export default function RootLayout() {
           headerTintColor: '#4A3B32',
         }}
       />
-      <Stack.Screen
-        name="perfil"
-        options={{
-          headerShown: true,
-          title: 'Mi Perfil',
-          headerStyle: { backgroundColor: '#F7EFE8' },
-          headerTintColor: '#4A3B32',
-        }}
-      />
     </Stack>
   );
 }

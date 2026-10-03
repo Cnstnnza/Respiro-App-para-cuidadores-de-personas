@@ -17,7 +17,7 @@ export default function TabLayout() {
         },
       }}
     >
-      {/* 1. Muro / Foro Comunitario como Inicio */}
+      {/* 1. Muro Comunitario */}
       <Tabs.Screen
         name="index"
         options={{
@@ -28,7 +28,7 @@ export default function TabLayout() {
         }}
       />
 
-      {/* 2. Pacientes */}
+      {/* 2. Pacientes (Gestión integral con Medicación y Citas) */}
       <Tabs.Screen
         name="pacientes"
         options={{
@@ -39,18 +39,7 @@ export default function TabLayout() {
         }}
       />
 
-      {/* 3. Fusión de Medicación y Horas Médicas */}
-      <Tabs.Screen
-        name="medicacion"
-        options={{
-          title: 'Salud',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="medkit-outline" color={color} size={size} />
-          ),
-        }}
-      />
-
-      {/* 4. Guías y Recursos de Apoyo */}
+      {/* 3. Guías y Recursos de Apoyo */}
       <Tabs.Screen
         name="guias"
         options={{
@@ -58,6 +47,30 @@ export default function TabLayout() {
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="book-outline" color={color} size={size} />
           ),
+        }}
+      />
+
+      {/* 4. Perfil Propio (con reseteo de parámetros al presionar la pestaña) */}
+      <Tabs.Screen
+        name="perfil"
+        listeners={({ navigation }) => ({
+          tabPress: () => {
+            navigation.navigate('perfil', { userId: undefined });
+          },
+        })}
+        options={{
+          title: 'Perfil',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="person-circle-outline" color={color} size={size} />
+          ),
+        }}
+      />
+
+      {/* Ocultar la tab antigua si aún existiera */}
+      <Tabs.Screen
+        name="medicacion"
+        options={{
+          href: null,
         }}
       />
     </Tabs>
