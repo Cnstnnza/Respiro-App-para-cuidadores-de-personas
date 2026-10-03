@@ -34,6 +34,7 @@ export default function LoginScreen() {
         password: password,
       });
       if (error) throw error;
+      // Redirige al grupo de pestañas (abre index automáticamente: el foro)
       router.replace('/(tabs)');
     } catch (err: any) {
       Alert.alert('Error al iniciar sesión', err.message || 'Credenciales inválidas.');
