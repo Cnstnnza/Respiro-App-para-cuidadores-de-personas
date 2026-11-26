@@ -1,540 +1,414 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   FlatList,
-  Modal,
   TextInput,
+  Modal,
   ScrollView,
   ActivityIndicator,
   Alert,
   Image,
-  Linking
+  Linking,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { supabase } from '../../lib/supabase';
 
-const CATEGORIAS = [
-  'Todas',
-  'Beneficios e Info',
-  'Espalda y Postura',
-  'Salud Mental y Pausa',
-  'Técnicas de Cuidado'
+const GUIAS_PREDEFINIDAS = [
+  {
+    id: 'g1',
+    titulo: 'Prevención de Caídas en el Hogar',
+    categoria: 'Seguridad',
+    contenido:
+      '1. Retira alfombras sueltas o cables en zonas de paso.\n2. Instala barras de apoyo firmes en la ducha y junto al inodoro.\n3. Mantén buena iluminación nocturna entre el dormitorio y el baño.\n4. Utiliza calzado cerrado con suela antideslizante.',
+    imagen_url: null,
+    video_url: null,
+    esLocal: true,
+  },
+  {
+    id: 'g2',
+    titulo: 'Movilización Segura sin Lastimar tu Espalda',
+    categoria: 'Cuidado Físico',
+    contenido:
+      '1. Flexiona siempre las rodillas, nunca dobles la cintura.\n2. Mantén al paciente lo más cerca posible de tu cuerpo al levantarlo.\n3. Separa los pies a la altura de tus hombros para tener estabilidad.\n4. Gira con los pies, evitando torcer la columna.',
+    imagen_url: null,
+    video_url: null,
+    esLocal: true,
+  },
+  {
+    id: 'g3',
+    titulo: 'Prevención de Úlceras por Presión (Escaras)',
+    categoria: 'Piel y Salud',
+    contenido:
+      '1. Cambia de postura al paciente cada 2 o 3 horas si pasa mucho tiempo en cama.\n2. Mantén la piel limpia, seca e hidratada con crema neutra.\n3. Revisa a diario zonas de apoyo como talones, caderas y espalda baja.\n4. Evita arrugas en las sábanas.',
+    imagen_url: null,
+    video_url: null,
+    esLocal: true,
+  },
+  {
+    id: 'g4',
+    titulo: 'Autocuidado del Cuidador: Evitar el Agotamiento',
+    categoria: 'Bienestar',
+    contenido:
+      '1. Pide ayuda a familiares o redes de apoyo antes de sentirte sobrepasado.\n2. Reserva al menos 30 minutos al día para descansar o caminar.\n3. Mantén tus propios controles médicos y horas de sueño.\n4. Comparte tus emociones en la comunidad de Respiro.',
+    imagen_url: null,
+    video_url: null,
+    esLocal: true,
+  },
 ];
 
-const GENEROS = ['Todos', 'Lectura', 'Infografía', 'Video'];
-
 export default function GuiasScreen() {
-  const [capsulas, setCapsulas] = useState<any[]>([]);
+  const [guias, setGuias] = useState<any[]>(GUIAS_PREDEFINIDAS);
   const [cargando, setCargando] = useState(true);
-  const [categoriaSeleccionada, setCategoriaSeleccionada] = useState('Todas');
-  const [generoSeleccionado, setGeneroSeleccionado] = useState('Todos');
-  const [esVerificado, setEsVerificado] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
+  const [puedePublicar, setPuedePublicar] = useState(false);
 
-  // Modal para ver cápsula en detalle
-  const [capsulaAbierta, setCapsulaAbierta] = useState<any>(null);
+  const [categoriaActiva, setCategoriaActiva] = useState<string>('Todas');
+  const [guiaSeleccionada, setGuiaSeleccionada] = useState<any>(null);
 
-  // Modal para crear nueva cápsula (solo usuarios verificados)
-  const [modalCrear, setModalCrear] = useState(false);
+  const [modalCrearVisible, setModalCrearVisible] = useState(false);
   const [nuevoTitulo, setNuevoTitulo] = useState('');
-  const [nuevaCategoria, setNuevaCategoria] = useState('Beneficios e Info');
-  const [nuevoGenero, setNuevoGenero] = useState<'Lectura' | 'Infografía' | 'Video'>('Lectura');
-  const [nuevaDescripcion, setNuevaDescripcion] = useState('');
-  const [videoUrl, setVideoUrl] = useState('');
-  const [imagenLocal, setImagenLocal] = useState<string | null>(null);
-  const [imagenBase64, setImagenBase64] = useState<string | null>(null);
-  const [tiempoEstimado, setTiempoEstimado] = useState('3 min');
+  const [nuevaCategoria, setNuevaCategoria] = useState('Cuidado Físico');
+  const [nuevoContenido, setNuevoContenido] = useState('');
+  const [nuevoVideoUrl, setNuevoVideoUrl] = useState('');
+  const [imagenLocal, setImagenLocal] = useState<any>(null);
   const [guardando, setGuardando] = useState(false);
 
   useEffect(() => {
-    verificarEstadoUsuario();
-    cargarCapsulas();
+    inicializar();
   }, []);
 
-  const verificarEstadoUsuario = async () => {
+  const inicializar = async () => {
+    setCargando(true);
     const { data: { user } } = await supabase.auth.getUser();
     if (user) {
       setCurrentUser(user);
-      const { data: cuidador } = await supabase
+      const { data: perfil } = await supabase
         .from('cuidadores')
         .select('verificado')
         .eq('id', user.id)
         .maybeSingle();
 
-      if (cuidador && Boolean(cuidador.verificado)) {
-        setEsVerificado(true);
-      }
+      setPuedePublicar(Boolean(perfil?.verificado));
     }
+    await cargarGuiasBD();
+    setCargando(false);
   };
 
-  const cargarCapsulas = async () => {
-    setCargando(true);
+  const cargarGuiasBD = async () => {
     try {
       const { data, error } = await supabase
-        .from('capsulas_guias')
-        .select('*, cuidadores:autor_id(nombre, foto_url, verificado)')
+        .from('guias')
+        .select('*')
         .order('created_at', { ascending: false });
 
       if (!error && data) {
-        setCapsulas(data);
+        setGuias([...data, ...GUIAS_PREDEFINIDAS]);
+      } else {
+        setGuias(GUIAS_PREDEFINIDAS);
       }
-    } catch (err: any) {
-      console.log('Error al cargar guías:', err.message);
-    } finally {
-      setCargando(false);
+    } catch {
+      setGuias(GUIAS_PREDEFINIDAS);
     }
   };
 
-  const seleccionarImagen = async () => {
+  const seleccionarImagenGuia = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
-      Alert.alert('Permiso requerido', 'Se necesita acceso a la galería para adjuntar una imagen.');
+      Alert.alert('Permiso requerido', 'Necesitamos acceso a tu galería para subir una foto.');
       return;
     }
 
-    const result = await ImagePicker.launchImageLibraryAsync({
+    const res = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
-      aspect: [16, 9],
       quality: 0.7,
       base64: true,
     });
 
-    if (!result.canceled && result.assets[0].uri) {
-      setImagenLocal(result.assets[0].uri);
-      setImagenBase64(result.assets[0].base64 || null);
+    if (!res.canceled && res.assets[0]) {
+      setImagenLocal(res.assets[0]);
     }
   };
 
-  const subirImagenStorage = async (): Promise<string | null> => {
-    if (!imagenBase64 || !currentUser) return null;
-    try {
-      const filePath = `guias/${currentUser.id}_${Date.now()}.jpg`;
-      const binaryString = atob(imagenBase64);
-      const len = binaryString.length;
-      const bytes = new Uint8Array(len);
-      for (let i = 0; i < len; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-      }
-
-      const { error: uploadError } = await supabase.storage
-        .from('guias_multimedia')
-        .upload(filePath, bytes.buffer, {
-          contentType: 'image/jpeg',
-          upsert: true,
-        });
-
-      if (uploadError) throw uploadError;
-
-      const { data } = supabase.storage
-        .from('guias_multimedia')
-        .getPublicUrl(filePath);
-
-      return data.publicUrl;
-    } catch (err: any) {
-      console.log('Error subiendo imagen:', err.message);
-      return null;
+  const guardarNuevaGuia = async () => {
+    if (!puedePublicar) {
+      Alert.alert('Acceso restringido', 'Solo perfiles profesionales o verificados pueden publicar guías.');
+      return;
     }
-  };
 
-  const guardarCapsula = async () => {
-    if (!nuevoTitulo.trim() || !nuevaDescripcion.trim()) {
-      Alert.alert('Campos obligatorios', 'El título y la descripción no pueden quedar vacíos.');
+    if (!nuevoTitulo.trim() || !nuevoContenido.trim()) {
+      Alert.alert('Campos obligatorios', 'Ingresa el título y las instrucciones de la guía.');
       return;
     }
 
     setGuardando(true);
-    let finalUrl = '';
+    let imagenSubidaUrl = null;
 
-    if (nuevoGenero === 'Infografía' && imagenBase64) {
-      const urlSubida = await subirImagenStorage();
-      if (urlSubida) finalUrl = urlSubida;
-    } else if (nuevoGenero === 'Video' && videoUrl.trim()) {
-      finalUrl = videoUrl.trim();
-    }
+    try {
+      if (imagenLocal && imagenLocal.base64 && currentUser) {
+        const filePath = `guias/${currentUser.id}_${Date.now()}.jpg`;
+        const bin = atob(imagenLocal.base64);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
 
-    const { error } = await supabase.from('capsulas_guias').insert([
-      {
-        autor_id: currentUser?.id,
+        const { error: uploadErr } = await supabase.storage
+          .from('guias_multimedia')
+          .upload(filePath, bytes.buffer, { contentType: 'image/jpeg', upsert: true });
+
+        if (!uploadErr) {
+          const { data: pubData } = supabase.storage
+            .from('guias_multimedia')
+            .getPublicUrl(filePath);
+          imagenSubidaUrl = pubData.publicUrl;
+        }
+      }
+
+      const payload: any = {
         titulo: nuevoTitulo.trim(),
         categoria: nuevaCategoria,
-        genero_formato: nuevoGenero,
-        descripcion: nuevaDescripcion.trim(),
-        multimedia_url: finalUrl,
-        tiempo_estimado: tiempoEstimado.trim() || '3 min',
-      },
-    ]);
+        contenido: nuevoContenido.trim(),
+        imagen_url: imagenSubidaUrl,
+        video_url: nuevoVideoUrl.trim() || null,
+        autor_id: currentUser?.id || null,
+      };
 
-    setGuardando(false);
+      const { error } = await supabase.from('guias').insert([payload]);
 
-    if (error) {
-      Alert.alert('Error', 'No se pudo guardar la cápsula: ' + error.message);
-    } else {
-      setNuevoTitulo('');
-      setNuevaDescripcion('');
-      setVideoUrl('');
-      setImagenLocal(null);
-      setImagenBase64(null);
-      setNuevoGenero('Lectura');
-      setModalCrear(false);
-      cargarCapsulas();
-      Alert.alert('¡Publicada!', 'La cápsula ahora está disponible para todos los cuidadores.');
+      if (error) {
+        Alert.alert('Error al publicar', error.message);
+      } else {
+        setModalCrearVisible(false);
+        setNuevoTitulo('');
+        setNuevoContenido('');
+        setNuevoVideoUrl('');
+        setImagenLocal(null);
+        await cargarGuiasBD();
+      }
+    } catch (err: any) {
+      Alert.alert('Error', err.message);
+    } finally {
+      setGuardando(false);
     }
   };
 
-  // Filtrado compuesto (Categoría + Género)
-  const capsulasFiltradas = capsulas.filter((c) => {
-    const coincideCategoria =
-      categoriaSeleccionada === 'Todas' || c.categoria === categoriaSeleccionada;
-    const coincideGenero =
-      generoSeleccionado === 'Todos' || c.genero_formato === generoSeleccionado;
-    return coincideCategoria && coincideGenero;
-  });
-
-  const getIconoGenero = (genero: string) => {
-    switch (genero) {
-      case 'Video':
-        return 'play-circle';
-      case 'Infografía':
-        return 'image';
-      default:
-        return 'document-text';
+  const abrirVideo = async (url: string) => {
+    try {
+      const ok = await Linking.canOpenURL(url);
+      if (ok) await Linking.openURL(url);
+      else Alert.alert('Aviso', 'No se pudo abrir el enlace de video.');
+    } catch {
+      Alert.alert('Error', 'Verifica el enlace ingresado.');
     }
   };
 
-  const getColorGenero = (genero: string) => {
-    switch (genero) {
-      case 'Video':
-        return '#D9534F';
-      case 'Infografía':
-        return '#8E44AD';
-      default:
-        return '#2E7D32';
-    }
-  };
+  const categorias = ['Todas', 'Seguridad', 'Cuidado Físico', 'Piel y Salud', 'Bienestar'];
+
+  const guiasFiltradas =
+    categoriaActiva === 'Todas'
+      ? guias
+      : guias.filter((g) => g.categoria === categoriaActiva);
 
   return (
     <View style={styles.container}>
-      {/* Encabezado */}
       <View style={styles.header}>
-        <View>
-          <Text style={styles.titulo}>Guías y Recursos</Text>
-          <Text style={styles.subtitulo}>Autocuidado, beneficios y técnicas</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.tituloHeader}>Guías de Cuidado</Text>
+          <Text style={styles.subHeader}>Consejos prácticos verificados</Text>
         </View>
-
-        {esVerificado && (
-          <View style={styles.tagVerificadoBadge}>
-            <Ionicons name="shield-checkmark" size={14} color="#1D9BF0" />
-            <Text style={styles.tagVerificadoTexto}>Verificado</Text>
-          </View>
+        {puedePublicar && (
+          <TouchableOpacity
+            style={styles.btnNuevaGuia}
+            onPress={() => setModalCrearVisible(true)}
+          >
+            <Ionicons name="add-circle" size={22} color="#FFFFFF" />
+            <Text style={styles.btnNuevaGuiaTexto}>Aportar</Text>
+          </TouchableOpacity>
         )}
       </View>
 
-      {/* 1. Filtros por Categoría */}
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
-        style={styles.filtrosScroll}
-        contentContainerStyle={{ paddingRight: 16 }}
+        style={styles.categoriasBar}
       >
-        {CATEGORIAS.map((cat) => (
-          <TouchableOpacity
-            key={cat}
-            style={[styles.chipFiltro, categoriaSeleccionada === cat && styles.chipFiltroActivo]}
-            onPress={() => setCategoriaSeleccionada(cat)}
-          >
-            <Text style={[styles.chipFiltroTexto, categoriaSeleccionada === cat && styles.chipFiltroTextoActivo]}>
-              {cat}
-            </Text>
-          </TouchableOpacity>
-        ))}
+        {categorias.map((cat) => {
+          const activa = categoriaActiva === cat;
+          return (
+            <TouchableOpacity
+              key={cat}
+              style={[styles.catChip, activa && styles.catChipActiva]}
+              onPress={() => setCategoriaActiva(cat)}
+            >
+              <Text style={[styles.catChipTexto, activa && styles.catChipTextoActiva]}>
+                {cat}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
       </ScrollView>
 
-      {/* 2. Filtros por Género / Formato */}
-      <View style={styles.generosRow}>
-        {GENEROS.map((gen) => (
-          <TouchableOpacity
-            key={gen}
-            style={[styles.generoBtn, generoSeleccionado === gen && styles.generoBtnActivo]}
-            onPress={() => setGeneroSeleccionado(gen)}
-          >
-            {gen !== 'Todos' && (
-              <Ionicons
-                name={getIconoGenero(gen)}
-                size={13}
-                color={generoSeleccionado === gen ? '#FFFFFF' : '#8A7A70'}
-                style={{ marginRight: 4 }}
-              />
-            )}
-            <Text style={[styles.generoBtnTexto, generoSeleccionado === gen && styles.generoBtnTextoActivo]}>
-              {gen}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      {/* Listado de Cápsulas */}
       {cargando ? (
-        <ActivityIndicator size="large" color="#C59A77" style={{ marginTop: 40 }} />
+        <ActivityIndicator size="large" color="#2C221E" style={{ marginTop: 40 }} />
       ) : (
         <FlatList
-          data={capsulasFiltradas}
+          data={guiasFiltradas}
           keyExtractor={(item) => String(item.id)}
           showsVerticalScrollIndicator={false}
-          ListEmptyComponent={
-            <View style={styles.vacioContainer}>
-              <Ionicons name="book-outline" size={48} color="#A0958E" />
-              <Text style={styles.vacioTexto}>No hay cápsulas con estos filtros.</Text>
-              <Text style={styles.vacioSub}>
-                {esVerificado
-                  ? 'Toca el botón flotante (+) para redactar una cápsula.'
-                  : 'Pronto se agregarán recursos validados para esta sección.'}
-              </Text>
-            </View>
-          }
           renderItem={({ item }) => (
             <TouchableOpacity
-              style={styles.cardCapsula}
-              activeOpacity={0.88}
-              onPress={() => setCapsulaAbierta(item)}
+              style={styles.cardGuia}
+              onPress={() => setGuiaSeleccionada(item)}
+              activeOpacity={0.85}
             >
-              {/* Vista previa si es infografía con imagen */}
-              {item.genero_formato === 'Infografía' && item.multimedia_url ? (
-                <Image source={{ uri: item.multimedia_url }} style={styles.portadaCapsula} />
+              <View style={styles.badgeCategoria}>
+                <Text style={styles.badgeCategoriaTexto}>{item.categoria}</Text>
+              </View>
+
+              <Text style={styles.guiaTitulo}>{item.titulo}</Text>
+
+              <Text style={styles.guiaExtracto} numberOfLines={3}>
+                {item.contenido}
+              </Text>
+
+              {item.imagen_url ? (
+                <Image source={{ uri: item.imagen_url }} style={styles.guiaThumb} />
               ) : null}
 
-              <View style={styles.cuerpoCard}>
-                <View style={styles.filaBadgeCategoria}>
-                  {/* Badge de Género / Formato */}
-                  <View style={[styles.badgeGenero, { backgroundColor: `${getColorGenero(item.genero_formato)}15` }]}>
-                    <Ionicons
-                      name={getIconoGenero(item.genero_formato)}
-                      size={12}
-                      color={getColorGenero(item.genero_formato)}
-                    />
-                    <Text style={[styles.badgeGeneroTexto, { color: getColorGenero(item.genero_formato) }]}>
-                      {item.genero_formato}
-                    </Text>
-                  </View>
-
-                  <Text style={styles.tiempoLectura}>
-                    <Ionicons name="time-outline" size={12} color="#8A7A70" /> {item.tiempo_estimado}
-                  </Text>
-                </View>
-
-                <Text style={styles.categoriaPillMini}>{item.categoria}</Text>
-                <Text style={styles.tituloCapsula}>{item.titulo}</Text>
-                <Text style={styles.descripcionCorta} numberOfLines={2}>
-                  {item.descripcion}
-                </Text>
-
-                {/* Footer autor verificado */}
-                <View style={styles.footerCapsula}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Ionicons name="checkmark-circle" size={14} color="#1D9BF0" />
-                    <Text style={styles.autorCapsula}>
-                      {item.cuidadores?.nombre || 'Especialista Respiro'}
-                    </Text>
-                  </View>
-
-                  {item.genero_formato === 'Video' && (
-                    <View style={styles.indicadorVideo}>
-                      <Ionicons name="play" size={11} color="#FFFFFF" />
-                      <Text style={styles.indicadorVideoTexto}>Ver video</Text>
-                    </View>
-                  )}
-                </View>
+              <View style={styles.guiaFooter}>
+                <Text style={styles.leerMasTexto}>Leer guía completa</Text>
+                <Ionicons name="arrow-forward-circle" size={24} color="#2C221E" />
               </View>
             </TouchableOpacity>
           )}
         />
       )}
 
-      {/* Botón Flotante para Publicar (SOLO visible para usuarios verificados) */}
-      {esVerificado && (
-        <TouchableOpacity
-          style={styles.fabCrear}
-          onPress={() => setModalCrear(true)}
-          activeOpacity={0.85}
-        >
-          <Ionicons name="add" size={28} color="#FFFFFF" />
-        </TouchableOpacity>
-      )}
-
-      {/* MODAL: VER CÁPSULA DETALLADA */}
-      <Modal visible={Boolean(capsulaAbierta)} animationType="slide" transparent>
+      {/* MODAL LECTURA DE GUÍA */}
+      <Modal visible={Boolean(guiaSeleccionada)} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
-          <View style={styles.modalDetalleContent}>
-            <View style={styles.modalDetalleHeader}>
-              <View style={{ flex: 1, paddingRight: 8 }}>
-                <Text style={styles.detalleBadgeCategoria}>{capsulaAbierta?.categoria}</Text>
-                <Text style={styles.detalleTitulo}>{capsulaAbierta?.titulo}</Text>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <View style={styles.badgeCategoria}>
+                <Text style={styles.badgeCategoriaTexto}>{guiaSeleccionada?.categoria}</Text>
               </View>
-              <TouchableOpacity onPress={() => setCapsulaAbierta(null)}>
-                <Ionicons name="close" size={24} color="#4A3B32" />
+              <TouchableOpacity onPress={() => setGuiaSeleccionada(null)}>
+                <Ionicons name="close-circle" size={32} color="#141414" />
               </TouchableOpacity>
             </View>
 
             <ScrollView showsVerticalScrollIndicator={false}>
-              {/* Imagen para Infografía */}
-              {capsulaAbierta?.genero_formato === 'Infografía' && capsulaAbierta?.multimedia_url ? (
+              <Text style={styles.modalTitulo}>{guiaSeleccionada?.titulo}</Text>
+
+              {guiaSeleccionada?.imagen_url ? (
                 <Image
-                  source={{ uri: capsulaAbierta.multimedia_url }}
-                  style={styles.detalleImagen}
-                  resizeMode="cover"
+                  source={{ uri: guiaSeleccionada.imagen_url }}
+                  style={styles.modalImagen}
                 />
               ) : null}
 
-              {/* Botón directo si es Video */}
-              {capsulaAbierta?.genero_formato === 'Video' && capsulaAbierta?.multimedia_url ? (
+              <Text style={styles.modalContenido}>{guiaSeleccionada?.contenido}</Text>
+
+              {guiaSeleccionada?.video_url ? (
                 <TouchableOpacity
-                  style={styles.btnAbrirVideo}
-                  onPress={() => Linking.openURL(capsulaAbierta.multimedia_url)}
+                  style={styles.btnVideo}
+                  onPress={() => abrirVideo(guiaSeleccionada.video_url)}
                 >
-                  <Ionicons name="logo-youtube" size={22} color="#FFFFFF" />
-                  <Text style={styles.btnAbrirVideoTexto}>Reproducir Video Demostrativo</Text>
+                  <Ionicons name="play-circle" size={26} color="#FFFFFF" />
+                  <Text style={styles.btnVideoTexto}>Ver Video Explicativo</Text>
                 </TouchableOpacity>
               ) : null}
 
-              <Text style={styles.detalleDescripcion}>{capsulaAbierta?.descripcion}</Text>
-
-              <View style={styles.detalleAutorCard}>
-                <Ionicons name="shield-checkmark" size={18} color="#1D9BF0" />
-                <View style={{ marginLeft: 8 }}>
-                  <Text style={styles.detalleAutorNombre}>
-                    Validado por: {capsulaAbierta?.cuidadores?.nombre || 'Profesional'}
-                  </Text>
-                  <Text style={styles.detalleAutorSub}>Material verificado para el cuidado</Text>
-                </View>
-              </View>
+              <TouchableOpacity
+                style={styles.btnCerrarLectura}
+                onPress={() => setGuiaSeleccionada(null)}
+              >
+                <Text style={styles.btnCerrarLecturaTexto}>Cerrar Guía</Text>
+              </TouchableOpacity>
             </ScrollView>
-
-            <TouchableOpacity
-              style={styles.btnCerrarDetalle}
-              onPress={() => setCapsulaAbierta(null)}
-            >
-              <Text style={styles.btnCerrarDetalleTexto}>Cerrar</Text>
-            </TouchableOpacity>
           </View>
         </View>
       </Modal>
 
-      {/* MODAL: REDACTAR CÁPSULA (SOLO VERIFICADOS) */}
-      <Modal visible={modalCrear} animationType="slide">
-        <View style={styles.modalCrearScreen}>
-          <View style={styles.modalCrearHeader}>
-            <TouchableOpacity onPress={() => setModalCrear(false)}>
-              <Text style={styles.modalCrearCancelar}>Cancelar</Text>
-            </TouchableOpacity>
-            <Text style={styles.modalCrearTitulo}>Nueva Cápsula</Text>
-            <TouchableOpacity onPress={guardarCapsula} disabled={guardando}>
-              {guardando ? (
-                <ActivityIndicator size="small" color="#C59A77" />
-              ) : (
-                <Text style={styles.modalCrearGuardar}>Publicar</Text>
-              )}
-            </TouchableOpacity>
-          </View>
-
-          <ScrollView style={{ padding: 16 }} showsVerticalScrollIndicator={false}>
-            <Text style={styles.formLabel}>Título de la Cápsula *</Text>
-            <TextInput
-              style={styles.formInput}
-              placeholder="Ej: Cómo girar al paciente sin dañar tu espalda"
-              placeholderTextColor="#A0958E"
-              value={nuevoTitulo}
-              onChangeText={setNuevoTitulo}
-            />
-
-            <Text style={styles.formLabel}>Categoría Temática *</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
-              {CATEGORIAS.filter((c) => c !== 'Todas').map((cat) => (
-                <TouchableOpacity
-                  key={cat}
-                  style={[styles.chipSelector, nuevaCategoria === cat && styles.chipSelectorActivo]}
-                  onPress={() => setNuevaCategoria(cat)}
-                >
-                  <Text style={[styles.chipSelectorTexto, nuevaCategoria === cat && styles.chipSelectorTextoActivo]}>
-                    {cat}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-
-            <Text style={styles.formLabel}>Género / Formato del Contenido *</Text>
-            <View style={styles.filaOpcionesMulti}>
-              {(['Lectura', 'Infografía', 'Video'] as const).map((gen) => (
-                <TouchableOpacity
-                  key={gen}
-                  style={[styles.btnOpcionMulti, nuevoGenero === gen && styles.btnOpcionMultiActivo]}
-                  onPress={() => setNuevoGenero(gen)}
-                >
-                  <Ionicons
-                    name={getIconoGenero(gen)}
-                    size={14}
-                    color={nuevoGenero === gen ? '#FFFFFF' : '#665B54'}
-                    style={{ marginRight: 4 }}
-                  />
-                  <Text style={[styles.textoOpcionMulti, nuevoGenero === gen && styles.textoOpcionMultiActivo]}>
-                    {gen}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+      {/* MODAL APORTAR NUEVA GUÍA */}
+      <Modal visible={modalCrearVisible} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitulo}>Publicar Nueva Guía</Text>
+              <TouchableOpacity onPress={() => setModalCrearVisible(false)}>
+                <Ionicons name="close-circle" size={30} color="#141414" />
+              </TouchableOpacity>
             </View>
 
-            <Text style={styles.formLabel}>Tiempo estimado</Text>
-            <TextInput
-              style={styles.formInput}
-              placeholder="Ej: 2 min lectura / Video de 3 min"
-              placeholderTextColor="#A0958E"
-              value={tiempoEstimado}
-              onChangeText={setTiempoEstimado}
-            />
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <Text style={styles.inputLabel}>Título de la guía *</Text>
+              <TextInput
+                style={styles.inputControl}
+                placeholder="Ej: Cómo preparar papilla nutritiva"
+                placeholderTextColor="#555555"
+                value={nuevoTitulo}
+                onChangeText={setNuevoTitulo}
+              />
 
-            {/* Selector de Imagen para Infografías */}
-            {nuevoGenero === 'Infografía' && (
-              <View style={{ marginBottom: 14 }}>
-                <TouchableOpacity style={styles.btnElegirFoto} onPress={seleccionarImagen}>
-                  <Ionicons name="camera-outline" size={20} color="#C59A77" />
-                  <Text style={styles.btnElegirFotoTexto}>
-                    {imagenLocal ? 'Cambiar imagen' : 'Seleccionar infografía o foto'}
-                  </Text>
-                </TouchableOpacity>
-                {imagenLocal ? (
-                  <Image source={{ uri: imagenLocal }} style={styles.previewFoto} />
-                ) : null}
-              </View>
-            )}
+              <Text style={styles.inputLabel}>Categoría</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
+                {['Seguridad', 'Cuidado Físico', 'Piel y Salud', 'Bienestar'].map((c) => (
+                  <TouchableOpacity
+                    key={c}
+                    style={[styles.catChip, nuevaCategoria === c && styles.catChipActiva]}
+                    onPress={() => setNuevaCategoria(c)}
+                  >
+                    <Text style={[styles.catChipTexto, nuevaCategoria === c && styles.catChipTextoActiva]}>
+                      {c}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
 
-            {/* Input URL para Videos */}
-            {nuevoGenero === 'Video' && (
-              <View style={{ marginBottom: 14 }}>
-                <Text style={styles.formLabel}>URL del Video (YouTube o Vimeo)</Text>
-                <TextInput
-                  style={styles.formInput}
-                  placeholder="https://youtube.com/watch?v=..."
-                  placeholderTextColor="#A0958E"
-                  value={videoUrl}
-                  onChangeText={setVideoUrl}
-                  autoCapitalize="none"
-                />
-              </View>
-            )}
+              <Text style={styles.inputLabel}>Pasos e instrucciones *</Text>
+              <TextInput
+                style={[styles.inputControl, { minHeight: 110, textAlignVertical: 'top' }]}
+                placeholder="Escribe los pasos claros y ordenados..."
+                placeholderTextColor="#555555"
+                multiline
+                value={nuevoContenido}
+                onChangeText={setNuevoContenido}
+              />
 
-            <Text style={styles.formLabel}>Descripción y Paso a Paso *</Text>
-            <TextInput
-              style={[styles.formInput, { minHeight: 140, textAlignVertical: 'top' }]}
-              placeholder="Explica con claridad los requisitos, pasos o ejercicios para el cuidador..."
-              placeholderTextColor="#A0958E"
-              multiline
-              value={nuevaDescripcion}
-              onChangeText={setNuevaDescripcion}
-            />
-          </ScrollView>
+              <Text style={styles.inputLabel}>Enlace de Video (opcional)</Text>
+              <TextInput
+                style={styles.inputControl}
+                placeholder="https://youtube.com/..."
+                placeholderTextColor="#555555"
+                autoCapitalize="none"
+                value={nuevoVideoUrl}
+                onChangeText={setNuevoVideoUrl}
+              />
+
+              <TouchableOpacity style={styles.btnSubirFoto} onPress={seleccionarImagenGuia}>
+                <Ionicons name="image" size={22} color="#141414" />
+                <Text style={styles.btnSubirFotoTexto}>
+                  {imagenLocal ? 'Imagen seleccionada ✓' : 'Adjuntar Fotografía (opcional)'}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.btnPublicarGuia}
+                onPress={guardarNuevaGuia}
+                disabled={guardando}
+              >
+                {guardando ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.btnPublicarGuiaTexto}>Publicar Guía</Text>
+                )}
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
         </View>
       </Modal>
     </View>
@@ -542,71 +416,44 @@ export default function GuiasScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F7EFE8', padding: 16 },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
-  titulo: { fontSize: 26, fontWeight: 'bold', color: '#4A3B32' },
-  subtitulo: { fontSize: 13, color: '#8A7A70' },
-  tagVerificadoBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#E1F5FE', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
-  tagVerificadoTexto: { fontSize: 11, color: '#0288D1', fontWeight: 'bold', marginLeft: 4 },
-  filtrosScroll: { maxHeight: 38, marginBottom: 8 },
-  chipFiltro: { backgroundColor: '#FFFFFF', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, marginRight: 8, borderWidth: 1, borderColor: '#E8DFD8' },
-  chipFiltroActivo: { backgroundColor: '#C59A77', borderColor: '#C59A77' },
-  chipFiltroTexto: { fontSize: 12, color: '#665B54', fontWeight: '600' },
-  chipFiltroTextoActivo: { color: '#FFFFFF', fontWeight: 'bold' },
-  generosRow: { flexDirection: 'row', marginBottom: 12 },
-  generoBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FAF6F0', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10, marginRight: 6, borderWidth: 1, borderColor: '#E8DFD8' },
-  generoBtnActivo: { backgroundColor: '#4A3B32', borderColor: '#4A3B32' },
-  generoBtnTexto: { fontSize: 11, color: '#665B54', fontWeight: '600' },
-  generoBtnTextoActivo: { color: '#FFFFFF', fontWeight: 'bold' },
-  cardCapsula: { backgroundColor: '#FFFFFF', borderRadius: 16, marginBottom: 12, overflow: 'hidden', borderWidth: 1, borderColor: '#E8DFD8' },
-  portadaCapsula: { width: '100%', height: 135 },
-  cuerpoCard: { padding: 14 },
-  filaBadgeCategoria: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
-  badgeGenero: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
-  badgeGeneroTexto: { fontSize: 11, fontWeight: 'bold', marginLeft: 4 },
-  tiempoLectura: { fontSize: 11, color: '#8A7A70' },
-  categoriaPillMini: { fontSize: 11, color: '#C59A77', fontWeight: '700', marginBottom: 2 },
-  tituloCapsula: { fontSize: 16, fontWeight: 'bold', color: '#4A3B32', marginBottom: 4 },
-  descripcionCorta: { fontSize: 13, color: '#665B54', lineHeight: 18, marginBottom: 10 },
-  footerCapsula: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderTopWidth: 1, borderTopColor: '#F7EFE8', paddingTop: 8 },
-  autorCapsula: { fontSize: 12, color: '#536471', fontWeight: '600', marginLeft: 4 },
-  indicadorVideo: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#D9534F', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
-  indicadorVideoTexto: { fontSize: 10, color: '#FFFFFF', fontWeight: 'bold', marginLeft: 4 },
-  fabCrear: { position: 'absolute', bottom: 20, right: 20, width: 54, height: 54, borderRadius: 27, backgroundColor: '#C59A77', justifyContent: 'center', alignItems: 'center', elevation: 6 },
-  vacioContainer: { alignItems: 'center', padding: 40 },
-  vacioTexto: { fontSize: 15, fontWeight: 'bold', color: '#8A7A70', marginTop: 10 },
-  vacioSub: { fontSize: 13, color: '#A0958E', textAlign: 'center', marginTop: 4 },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 },
-  modalDetalleContent: { backgroundColor: '#FFFFFF', borderRadius: 20, padding: 18, maxHeight: '88%' },
-  modalDetalleHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 },
-  detalleBadgeCategoria: { fontSize: 12, fontWeight: 'bold', color: '#C59A77', marginBottom: 2 },
-  detalleTitulo: { fontSize: 18, fontWeight: 'bold', color: '#4A3B32' },
-  detalleImagen: { width: '100%', height: 180, borderRadius: 12, marginBottom: 14 },
-  btnAbrirVideo: { flexDirection: 'row', backgroundColor: '#D9534F', padding: 12, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginBottom: 14 },
-  btnAbrirVideoTexto: { color: '#FFFFFF', fontWeight: 'bold', marginLeft: 8 },
-  detalleDescripcion: { fontSize: 14, color: '#4A3B32', lineHeight: 22, marginBottom: 16 },
-  detalleAutorCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FAF6F0', padding: 10, borderRadius: 10, marginBottom: 14 },
-  detalleAutorNombre: { fontSize: 12, fontWeight: 'bold', color: '#4A3B32' },
-  detalleAutorSub: { fontSize: 11, color: '#8A7A70' },
-  btnCerrarDetalle: { backgroundColor: '#C59A77', borderRadius: 12, paddingVertical: 10, alignItems: 'center' },
-  btnCerrarDetalleTexto: { color: '#FFFFFF', fontWeight: 'bold' },
-  modalCrearScreen: { flex: 1, backgroundColor: '#FFFFFF', paddingTop: 40 },
-  modalCrearHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: '#F7EFE8' },
-  modalCrearCancelar: { fontSize: 15, color: '#8A7A70' },
-  modalCrearTitulo: { fontSize: 17, fontWeight: 'bold', color: '#4A3B32' },
-  modalCrearGuardar: { fontSize: 15, fontWeight: 'bold', color: '#C59A77' },
-  formLabel: { fontSize: 12, fontWeight: 'bold', color: '#8A7A70', marginTop: 10, marginBottom: 4 },
-  formInput: { backgroundColor: '#FAF6F0', borderWidth: 1, borderColor: '#E8DFD8', borderRadius: 10, padding: 10, fontSize: 14, color: '#333' },
-  chipSelector: { backgroundColor: '#FAF6F0', borderWidth: 1, borderColor: '#E8DFD8', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, marginRight: 8 },
-  chipSelectorActivo: { backgroundColor: '#C59A77', borderColor: '#C59A77' },
-  chipSelectorTexto: { fontSize: 12, color: '#665B54' },
-  chipSelectorTextoActivo: { color: '#FFFFFF', fontWeight: 'bold' },
-  filaOpcionesMulti: { flexDirection: 'row', marginBottom: 12 },
-  btnOpcionMulti: { flex: 1, flexDirection: 'row', paddingVertical: 8, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#E8DFD8', borderRadius: 8, marginHorizontal: 2 },
-  btnOpcionMultiActivo: { backgroundColor: '#4A3B32', borderColor: '#4A3B32' },
-  textoOpcionMulti: { fontSize: 12, color: '#665B54', fontWeight: '600' },
-  textoOpcionMultiActivo: { color: '#FFFFFF', fontWeight: 'bold' },
-  btnElegirFoto: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#FAF6F0', borderWidth: 1, borderColor: '#C59A77', borderStyle: 'dashed', borderRadius: 10, padding: 12, marginBottom: 8 },
-  btnElegirFotoTexto: { color: '#C59A77', fontWeight: '600', marginLeft: 8, fontSize: 13 },
-  previewFoto: { width: '100%', height: 140, borderRadius: 10, marginTop: 4 }
+  container: { flex: 1, backgroundColor: '#F2ECE4', padding: 16 },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
+  tituloHeader: { fontSize: 26, fontWeight: '900', color: '#141414' },
+  subHeader: { fontSize: 15, fontWeight: '600', color: '#333333' },
+  btnNuevaGuia: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#2C221E', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 12 },
+  btnNuevaGuiaTexto: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 16, marginLeft: 6 },
+
+  categoriasBar: { maxHeight: 50, marginBottom: 14 },
+  catChip: { backgroundColor: '#FFFFFF', paddingVertical: 10, paddingHorizontal: 16, borderRadius: 24, marginRight: 8, borderWidth: 2, borderColor: '#2C221E' },
+  catChipActiva: { backgroundColor: '#2C221E' },
+  catChipTexto: { fontSize: 15, fontWeight: 'bold', color: '#141414' },
+  catChipTextoActiva: { color: '#FFFFFF' },
+
+  cardGuia: { backgroundColor: '#FFFFFF', borderRadius: 16, padding: 18, marginBottom: 14, borderWidth: 2, borderColor: '#6E5D4F' },
+  badgeCategoria: { alignSelf: 'flex-start', backgroundColor: '#2C221E', paddingVertical: 5, paddingHorizontal: 12, borderRadius: 10, marginBottom: 10 },
+  badgeCategoriaTexto: { color: '#FFFFFF', fontSize: 14, fontWeight: 'bold' },
+  guiaTitulo: { fontSize: 20, fontWeight: 'bold', color: '#141414', marginBottom: 8 },
+  guiaExtracto: { fontSize: 16, color: '#2B2B2B', lineHeight: 24, marginBottom: 12 },
+  guiaThumb: { width: '100%', height: 160, borderRadius: 12, marginBottom: 12, borderWidth: 1.5, borderColor: '#2C221E' },
+  guiaFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderTopWidth: 1.5, borderTopColor: '#D5C9BC', paddingTop: 12 },
+  leerMasTexto: { fontSize: 16, fontWeight: 'bold', color: '#141414' },
+
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.65)', justifyContent: 'center', padding: 16 },
+  modalCard: { backgroundColor: '#FFFFFF', borderRadius: 18, padding: 20, maxHeight: '90%', borderWidth: 2, borderColor: '#141414' },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  modalTitulo: { fontSize: 22, fontWeight: 'bold', color: '#141414', marginBottom: 14 },
+  modalImagen: { width: '100%', height: 200, borderRadius: 12, marginBottom: 14, borderWidth: 1.5, borderColor: '#2C221E' },
+  modalContenido: { fontSize: 18, color: '#141414', lineHeight: 28, marginBottom: 20 },
+
+  btnVideo: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#B71C1C', paddingVertical: 14, borderRadius: 14, marginBottom: 12 },
+  btnVideoTexto: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 17, marginLeft: 8 },
+  btnCerrarLectura: { backgroundColor: '#2C221E', paddingVertical: 14, borderRadius: 14, alignItems: 'center' },
+  btnCerrarLecturaTexto: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 17 },
+
+  inputLabel: { fontSize: 15, fontWeight: 'bold', color: '#141414', marginTop: 12, marginBottom: 6 },
+  inputControl: { backgroundColor: '#F2ECE4', borderWidth: 2, borderColor: '#2C221E', borderRadius: 12, padding: 12, fontSize: 16, color: '#141414' },
+  btnSubirFoto: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#F2ECE4', borderWidth: 2, borderColor: '#2C221E', borderRadius: 12, paddingVertical: 14, marginTop: 14 },
+  btnSubirFotoTexto: { fontSize: 16, fontWeight: 'bold', color: '#141414', marginLeft: 8 },
+  btnPublicarGuia: { backgroundColor: '#2C221E', borderRadius: 14, paddingVertical: 15, alignItems: 'center', marginTop: 18, marginBottom: 10 },
+  btnPublicarGuiaTexto: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 17 },
 });

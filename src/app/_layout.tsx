@@ -1,73 +1,81 @@
+import React, { useEffect, useState } from 'react';
+import { View, ActivityIndicator } from 'react-native';
 import { Stack, useRouter, useSegments } from 'expo-router';
-import { useEffect, useState } from 'react';
-import { ActivityIndicator, View } from 'react-native';
 import { supabase } from '../lib/supabase';
 
 export default function RootLayout() {
-  const [cargando, setCargando] = useState(true);
-  const [sesion, setSesion] = useState<any>(null);
-  const segments = useSegments();
   const router = useRouter();
+  const segments = useSegments();
+  const [checkingAuth, setCheckingAuth] = useState(true);
+  const [hasSession, setHasSession] = useState(false);
 
   useEffect(() => {
-    // 1. Verificar sesión inicial
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSesion(session);
-      setCargando(false);
-    });
+    let mounted = true;
 
-    // 2. Escuchar cambios de sesión (login, logout)
+    const initSession = async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (mounted) {
+          setHasSession(Boolean(data.session));
+        }
+      } catch (e) {
+        console.log('Error verificando sesión:', e);
+        if (mounted) setHasSession(false);
+      } finally {
+        if (mounted) setCheckingAuth(false);
+      }
+    };
+
+    initSession();
+
     const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSesion(session);
+      if (mounted) {
+        setHasSession(Boolean(session));
+        setCheckingAuth(false);
+      }
     });
 
     return () => {
-      authListener.subscription.unsubscribe();
+      mounted = false;
+      authListener?.subscription?.unsubscribe();
     };
   }, []);
 
   useEffect(() => {
-    if (cargando) return;
+    if (checkingAuth) return;
 
-    const enLogin = segments[0] === 'login';
+    const inLoginScreen = segments[0] === 'login';
 
-    if (!sesion && !enLogin) {
-      // Si no tiene sesión y está fuera de login, redirige a login
+    if (!hasSession && !inLoginScreen) {
       router.replace('/login');
-    } else if (sesion && enLogin) {
-      // Si ya inició sesión y está en login, redirige al inicio
+    } else if (hasSession && inLoginScreen) {
       router.replace('/(tabs)');
     }
-  }, [sesion, segments, cargando]);
+  }, [checkingAuth, hasSession, segments]);
 
-  if (cargando) {
+  if (checkingAuth) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F7EFE8' }}>
-        <ActivityIndicator size="large" color="#C59A77" />
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F2ECE4' }}>
+        <ActivityIndicator size="large" color="#2C221E" />
       </View>
     );
   }
 
   return (
-    <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+    <Stack
+      screenOptions={{
+        headerStyle: { backgroundColor: '#2C221E' },
+        headerTintColor: '#FFFFFF',
+        headerTitleStyle: { fontWeight: 'bold', fontSize: 20 },
+      }}
+    >
       <Stack.Screen name="login" options={{ headerShown: false }} />
+      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen
-        name="ficha"
+        name="notificaciones"
         options={{
-          headerShown: true,
-          title: 'Ficha del Paciente',
-          headerStyle: { backgroundColor: '#F7EFE8' },
-          headerTintColor: '#4A3B32',
-        }}
-      />
-      <Stack.Screen
-        name="horas_medicas"
-        options={{
-          headerShown: true,
-          title: 'Horas Médicas',
-          headerStyle: { backgroundColor: '#F7EFE8' },
-          headerTintColor: '#4A3B32',
+          title: 'Notificaciones',
+          presentation: 'modal',
         }}
       />
     </Stack>

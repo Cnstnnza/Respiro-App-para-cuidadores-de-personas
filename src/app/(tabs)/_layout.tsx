@@ -1,74 +1,120 @@
+import React, { useState, useCallback } from 'react';
+import { Tabs, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { Tabs } from 'expo-router';
+import { supabase } from '../../lib/supabase';
 
-export default function TabLayout() {
+export default function TabsLayout() {
+  const [esSuperAdmin, setEsSuperAdmin] = useState(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      let activo = true;
+      const verificarRol = async () => {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user || !activo) return;
+
+        const { data: perfil } = await supabase
+          .from('cuidadores')
+          .select('rol_global, email')
+          .eq('id', user.id)
+          .maybeSingle();
+
+        const esMaster =
+          perfil?.rol_global === 'super_admin' ||
+          user.email?.toLowerCase() === 'respiro.app.umag@gmail.com';
+
+        if (activo) setEsSuperAdmin(esMaster);
+      };
+
+      verificarRol();
+      return () => {
+        activo = false;
+      };
+    }, [])
+  );
+
   return (
     <Tabs
       screenOptions={{
-        headerShown: false,
-        tabBarActiveTintColor: '#C59A77',
-        tabBarInactiveTintColor: '#A0958E',
+        headerStyle: { backgroundColor: '#2C221E' },
+        headerTintColor: '#FFFFFF',
+        headerTitleStyle: { fontWeight: 'bold', fontSize: 20 },
         tabBarStyle: {
           backgroundColor: '#FFFFFF',
-          borderTopColor: '#E8DFD8',
-          height: 62,
+          borderTopWidth: 2,
+          borderTopColor: '#2C221E',
+          height: 68,
           paddingBottom: 8,
-          paddingTop: 8,
+          paddingTop: 6,
         },
+        tabBarActiveTintColor: '#2C221E',
+        tabBarInactiveTintColor: '#555555',
+        tabBarLabelStyle: { fontSize: 13, fontWeight: 'bold' },
       }}
     >
-      {/* 1. Muro Comunitario */}
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Inicio',
+          title: 'Muro',
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="chatbubbles-outline" color={color} size={size} />
+            <Ionicons name="chatbubbles" size={size} color={color} />
           ),
         }}
       />
 
-      {/* 2. Pacientes (Gestión integral con Medicación y Citas) */}
       <Tabs.Screen
         name="pacientes"
         options={{
           title: 'Pacientes',
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="people-outline" color={color} size={size} />
+            <Ionicons name="heart" size={size} color={color} />
           ),
         }}
       />
 
-      {/* 3. Guías y Recursos de Apoyo */}
       <Tabs.Screen
         name="guias"
         options={{
           title: 'Guías',
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="book-outline" color={color} size={size} />
+            <Ionicons name="book" size={size} color={color} />
           ),
         }}
       />
 
-      {/* 4. Perfil Propio (con reseteo de parámetros al presionar la pestaña) */}
+      <Tabs.Screen
+        name="foros"
+        options={{
+          title: 'Ayudas',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="library" size={size} color={color} />
+          ),
+        }}
+      />
+
       <Tabs.Screen
         name="perfil"
-        listeners={({ navigation }) => ({
-          tabPress: () => {
-            navigation.navigate('perfil', { userId: undefined });
-          },
-        })}
         options={{
           title: 'Perfil',
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="person-circle-outline" color={color} size={size} />
+            <Ionicons name="person-circle" size={size} color={color} />
           ),
         }}
       />
 
-      {/* Ocultar la tab antigua si aún existiera */}
       <Tabs.Screen
-        name="medicacion"
+        name="administracion"
+        options={{
+          title: 'Admin',
+          href: esSuperAdmin ? '/administracion' : null,
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="shield-checkmark" size={size} color={color} />
+          ),
+        }}
+      />
+
+      <Tabs.Screen
+        name="grupo"
         options={{
           href: null,
         }}

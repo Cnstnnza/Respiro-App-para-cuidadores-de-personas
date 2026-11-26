@@ -4,268 +4,355 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  Image,
   FlatList,
   TextInput,
+  Modal,
   ActivityIndicator,
   Alert,
-  Modal,
-  KeyboardAvoidingView,
-  Platform,
+  Image,
+  ScrollView,
 } from 'react-native';
-import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { supabase } from '../../lib/supabase';
 
 export default function PerfilScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ userId?: string }>();
-
   const [loading, setLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [perfil, setPerfil] = useState<any>(null);
-  const [posts, setPosts] = useState<any[]>([]);
-  const [esMiPerfil, setEsMiPerfil] = useState(true);
+  const [publicaciones, setPublicaciones] = useState<any[]>([]);
 
-  // Tab interna estilo Twitter
-  const [tabActiva, setTabActiva] = useState<'posts' | 'respuestas'>('posts');
-
-  // Modal para Crear Post desde el perfil
-  const [modalPostVisible, setModalPostVisible] = useState(false);
-  const [nuevoPostTexto, setNuevoPostTexto] = useState('');
+  // Nueva publicación desde perfil
+  const [nuevaPublicacion, setNuevaPublicacion] = useState('');
   const [publicando, setPublicando] = useState(false);
 
   // Modal Editar Perfil
-  const [modalEditarVisible, setModalEditarVisible] = useState(false);
+  const [modalEditar, setModalEditar] = useState(false);
   const [editNombre, setEditNombre] = useState('');
-  const [editBio, setEditBio] = useState('');
+  const [editBiografia, setEditBiografia] = useState('');
   const [guardandoPerfil, setGuardandoPerfil] = useState(false);
+
+  const cargarMisPublicaciones = async (userId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('publicaciones')
+        .select('*')
+        .or(`user_id.eq.${userId},autor_id.eq.${userId}`)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.log('Error cargando publicaciones propias:', error.message);
+      }
+      setPublicaciones(data || []);
+    } catch (err) {
+      console.log('Error inesperado cargando publicaciones:', err);
+      setPublicaciones([]);
+    }
+  };
 
   useFocusEffect(
     useCallback(() => {
-      let isMounted = true;
+      let activo = true;
 
-      const inicializar = async () => {
+      const cargarDatos = async () => {
         setLoading(true);
-        const { data: { user } } = await supabase.auth.getUser();
+        try {
+          const {
+            data: { user },
+            error: authErr,
+          } = await supabase.auth.getUser();
 
-        if (!user || !isMounted) {
-          setLoading(false);
-          return;
+          if (authErr || !user) {
+            if (activo) {
+              setCurrentUser(null);
+              setPerfil(null);
+              setPublicaciones([]);
+            }
+            return;
+          }
+
+          if (!activo) return;
+          setCurrentUser(user);
+
+          // Cargar o inicializar perfil en cuidadores
+          let { data: datosPerfil, error: perfilErr } = await supabase
+            .from('cuidadores')
+            .select('*')
+            .eq('id', user.id)
+            .maybeSingle();
+
+          if (perfilErr) {
+            console.log('Error consultando cuidadores:', perfilErr.message);
+          }
+
+          if (!datosPerfil && activo) {
+            const nombreBase =
+              user.user_metadata?.nombre ||
+              user.email?.split('@')[0] ||
+              'Cuidador Respiro';
+
+            const { data: nuevoPerfil, error: insertErr } = await supabase
+              .from('cuidadores')
+              .insert([
+                {
+                  id: user.id,
+                  nombre: nombreBase,
+                  email: user.email,
+                  biografia: '',
+                  verificado: false,
+                },
+              ])
+              .select()
+              .maybeSingle();
+
+            if (insertErr) {
+              console.log('Error creando perfil inicial:', insertErr.message);
+            }
+            datosPerfil = nuevoPerfil || {
+              id: user.id,
+              nombre: nombreBase,
+              email: user.email,
+              biografia: '',
+              verificado: false,
+            };
+          }
+
+          if (datosPerfil && activo) {
+            setPerfil(datosPerfil);
+            setEditNombre(datosPerfil.nombre || '');
+            setEditBiografia(datosPerfil.biografia || '');
+          }
+
+          if (activo) {
+            await cargarMisPublicaciones(user.id);
+          }
+        } catch (err) {
+          console.log('Error general en PerfilScreen:', err);
+        } finally {
+          if (activo) setLoading(false);
         }
-
-        setCurrentUser(user);
-
-        const idACargar = params.userId && params.userId !== user.id ? params.userId : user.id;
-        setEsMiPerfil(idACargar === user.id);
-
-        await cargarDatos(idACargar, user.id);
-        if (isMounted) setLoading(false);
       };
 
-      inicializar();
-
+      cargarDatos();
       return () => {
-        isMounted = false;
+        activo = false;
       };
-    }, [params.userId])
+    }, [])
   );
 
-  const cargarDatos = async (targetId: string, currentUserId: string) => {
+  const cambiarFotoPerfil = async () => {
     try {
-      // 1. Datos Cuidador
-      const { data: datosCuidador } = await supabase
-        .from('cuidadores')
-        .select('*')
-        .eq('id', targetId)
-        .maybeSingle();
-
-      if (datosCuidador) {
-        setPerfil(datosCuidador);
-        setEditNombre(datosCuidador.nombre || '');
-        setEditBio(datosCuidador.biografia || '');
-      } else {
-        setPerfil({
-          id: targetId,
-          nombre: 'Cuidador Respiro',
-          biografia: '',
-          foto_url: null,
-          verificado: false,
-        });
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permiso necesario', 'Activa el permiso de galería para cambiar tu foto.');
+        return;
       }
 
-      // 2. Posts del usuario
-      const { data: misPosts, error } = await supabase
-        .from('publicaciones')
-        .select('*')
-        .eq('user_id', targetId)
-        .order('created_at', { ascending: false });
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.7,
+        base64: true,
+      });
 
-      if (!error && misPosts) {
-        const { data: likes } = await supabase.from('likes').select('*');
-        const { data: coments } = await supabase.from('comentarios').select('id, publicacion_id');
+      if (res.canceled || !res.assets[0]?.base64 || !currentUser) return;
 
-        const formateados = misPosts.map((p) => {
-          const misLikes = likes ? likes.filter((l) => l.publicacion_id === p.id) : [];
-          const misComs = coments ? coments.filter((c) => c.publicacion_id === p.id) : [];
-          return {
-            ...p,
-            totalLikes: misLikes.length,
-            hasLiked: misLikes.some((l) => l.user_id === currentUserId),
-            totalComentarios: misComs.length,
-          };
-        });
+      const filePath = `avatars/${currentUser.id}_${Date.now()}.jpg`;
+      const bin = atob(res.assets[0].base64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
 
-        setPosts(formateados);
+      const { error: uploadErr } = await supabase.storage
+        .from('avatares')
+        .upload(filePath, bytes.buffer, { contentType: 'image/jpeg', upsert: true });
+
+      if (uploadErr) {
+        Alert.alert('Error al subir imagen', uploadErr.message);
+        return;
+      }
+
+      const { data: pubData } = supabase.storage.from('avatares').getPublicUrl(filePath);
+      const nuevaUrl = pubData.publicUrl;
+
+      const { error: updateErr } = await supabase
+        .from('cuidadores')
+        .update({ avatar_url: nuevaUrl })
+        .eq('id', currentUser.id);
+
+      if (updateErr) {
+        Alert.alert('Error al guardar foto', updateErr.message);
+      } else {
+        setPerfil((prev: any) => ({ ...prev, avatar_url: nuevaUrl }));
+        Alert.alert('Foto actualizada', 'Tu foto de perfil se guardó correctamente.');
       }
     } catch (e: any) {
-      console.log('Error al cargar perfil:', e.message);
+      Alert.alert('Error', e?.message || 'No se pudo cambiar la foto.');
     }
   };
 
-  // Crear publicación desde el Perfil
-  const publicarDesdePerfil = async () => {
-    if (!nuevoPostTexto.trim()) {
-      Alert.alert('Atención', 'Escribe algo en tu publicación.');
+  const guardarCambiosPerfil = async () => {
+    if (!editNombre.trim() || !currentUser) {
+      Alert.alert('Nombre requerido', 'El nombre no puede quedar vacío.');
       return;
     }
+
+    setGuardandoPerfil(true);
+    try {
+      const { data, error } = await supabase
+        .from('cuidadores')
+        .update({
+          nombre: editNombre.trim(),
+          biografia: editBiografia.trim(),
+        })
+        .eq('id', currentUser.id)
+        .select()
+        .single();
+
+      if (error) {
+        Alert.alert('Error al actualizar', error.message);
+      } else if (data) {
+        setPerfil(data);
+        setModalEditar(false);
+      }
+    } catch (e: any) {
+      Alert.alert('Error al actualizar', e?.message || 'Ocurrió un problema.');
+    } finally {
+      setGuardandoPerfil(false);
+    }
+  };
+
+  const crearPublicacionPerfil = async () => {
+    if (!nuevaPublicacion.trim()) {
+      Alert.alert('Mensaje vacío', 'Escribe algo antes de publicar.');
+      return;
+    }
+
+    if (!currentUser) return;
 
     setPublicando(true);
-    const { data: { user } } = await supabase.auth.getUser();
+    try {
+      const nombreAutor =
+        perfil?.nombre || currentUser.email?.split('@')[0] || 'Cuidador';
 
-    if (!user) {
-      Alert.alert('Error', 'Sesión no válida.');
+      const { data, error } = await supabase
+        .from('publicaciones')
+        .insert([
+          {
+            user_id: currentUser.id,
+            autor_id: currentUser.id,
+            autor_nombre: nombreAutor,
+            autor_email: currentUser.email,
+            contenido: nuevaPublicacion.trim(),
+          },
+        ])
+        .select()
+        .single();
+
+      if (error) {
+        Alert.alert('Error al publicar', error.message);
+      } else if (data) {
+        setPublicaciones((prev) => [data, ...prev]);
+        setNuevaPublicacion('');
+      }
+    } catch (e: any) {
+      Alert.alert('Error al publicar', e?.message || 'Ocurrió un problema.');
+    } finally {
       setPublicando(false);
-      return;
-    }
-
-    const { error } = await supabase.from('publicaciones').insert([
-      {
-        user_id: user.id,
-        contenido: nuevoPostTexto.trim(),
-      },
-    ]);
-
-    setPublicando(false);
-
-    if (error) {
-      Alert.alert('Error al publicar', error.message);
-    } else {
-      setNuevoPostTexto('');
-      setModalPostVisible(false);
-      await cargarDatos(user.id, user.id);
     }
   };
 
-  const eliminarPost = async (postId: string) => {
-    Alert.alert('Eliminar', '¿Deseas borrar esta publicación?', [
+  const eliminarPublicacion = async (id: string) => {
+    Alert.alert('Eliminar publicación', '¿Deseas borrar este mensaje de tu muro?', [
       { text: 'Cancelar', style: 'cancel' },
       {
         text: 'Eliminar',
         style: 'destructive',
         onPress: async () => {
-          const { error } = await supabase.from('publicaciones').delete().eq('id', postId);
-          if (!error) {
-            setPosts((prev) => prev.filter((p) => p.id !== postId));
+          try {
+            const { error } = await supabase.from('publicaciones').delete().eq('id', id);
+            if (!error) {
+              setPublicaciones((prev) => prev.filter((p) => p.id !== id));
+            }
+          } catch (e: any) {
+            Alert.alert('Error', e?.message || 'No se pudo eliminar.');
           }
         },
       },
     ]);
   };
 
-  const seleccionarFoto = async () => {
-    if (!esMiPerfil || !currentUser) return;
-
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permiso', 'Se requiere acceso a la galería.');
-      return;
-    }
-
-    const res = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.6,
-      base64: true,
-    });
-
-    if (!res.canceled && res.assets[0].base64) {
-      try {
-        setLoading(true);
-        const filePath = `perfiles/${currentUser.id}_avatar.jpg`;
-        const bin = atob(res.assets[0].base64);
-        const bytes = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-
-        await supabase.storage
-          .from('guias_multimedia')
-          .upload(filePath, bytes.buffer, { contentType: 'image/jpeg', upsert: true });
-
-        const { data } = supabase.storage.from('guias_multimedia').getPublicUrl(filePath);
-        const urlConBuster = `${data.publicUrl}?t=${Date.now()}`;
-
-        await supabase.from('cuidadores').upsert({ id: currentUser.id, foto_url: urlConBuster });
-        setPerfil((prev: any) => ({ ...prev, foto_url: urlConBuster }));
-      } catch (err: any) {
-        Alert.alert('Error', 'No se pudo subir la foto: ' + err.message);
-      } finally {
-        setLoading(false);
-      }
-    }
+  const cerrarSesion = async () => {
+    Alert.alert('Cerrar Sesión', '¿Seguro que deseas salir de tu cuenta?', [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Salir',
+        style: 'destructive',
+        onPress: async () => {
+          await supabase.auth.signOut();
+          router.replace('/login');
+        },
+      },
+    ]);
   };
 
-  const guardarPerfil = async () => {
-    if (!currentUser) return;
-    setGuardandoPerfil(true);
-    const { error } = await supabase.from('cuidadores').upsert({
-      id: currentUser.id,
-      nombre: editNombre.trim(),
-      biografia: editBio.trim(),
+  const formatearFecha = (iso: string) => {
+    if (!iso) return '';
+    return new Date(iso).toLocaleDateString('es-CL', {
+      day: 'numeric',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
     });
-    setGuardandoPerfil(false);
-
-    if (error) {
-      Alert.alert('Error', error.message);
-    } else {
-      setPerfil((prev: any) => ({ ...prev, nombre: editNombre.trim(), biografia: editBio.trim() }));
-      setModalEditarVisible(false);
-    }
   };
 
-  const handleUsuario = perfil?.nombre
-    ? `@${perfil.nombre.toLowerCase().replace(/\s+/g, '')}`
-    : '@cuidador';
+  if (loading) {
+    return (
+      <View style={styles.loaderContainer}>
+        <ActivityIndicator size="large" color="#2C221E" />
+      </View>
+    );
+  }
+
+  if (!currentUser) {
+    return (
+      <View style={styles.loaderContainer}>
+        <Text style={styles.vacioTexto}>No se encontró una sesión activa.</Text>
+        <TouchableOpacity
+          style={[styles.btnPublicar, { paddingHorizontal: 20, marginTop: 16 }]}
+          onPress={() => router.replace('/login')}
+        >
+          <Text style={styles.btnPublicarTexto}>Ir a Iniciar Sesión</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
-      {loading ? (
-        <ActivityIndicator size="large" color="#C59A77" style={{ marginTop: 40 }} />
-      ) : (
-        <FlatList
-          data={tabActiva === 'posts' ? posts : []}
-          keyExtractor={(item) => String(item.id)}
-          showsVerticalScrollIndicator={false}
-          ListHeaderComponent={
-            <View>
-              {/* 1. Header / Banner de Twitter */}
-              <View style={styles.bannerHeader}>
-                {!esMiPerfil && (
-                  <TouchableOpacity
-                    style={styles.btnVolverAtras}
-                    onPress={() => router.push('/(tabs)')}
-                  >
-                    <Ionicons name="arrow-back" size={20} color="#FFFFFF" />
-                  </TouchableOpacity>
-                )}
-              </View>
+      <FlatList
+        data={publicaciones}
+        keyExtractor={(item) => String(item.id)}
+        showsVerticalScrollIndicator={false}
+        ListHeaderComponent={
+          <View>
+            {/* Cabecera Superior */}
+            <View style={styles.topBar}>
+              <Text style={styles.tituloScreen}>Mi Perfil</Text>
+              <TouchableOpacity style={styles.btnCerrarSesion} onPress={cerrarSesion}>
+                <Ionicons name="log-out-outline" size={20} color="#FFFFFF" />
+                <Text style={styles.btnCerrarSesionTexto}>Salir</Text>
+              </TouchableOpacity>
+            </View>
 
-              {/* 2. Avatar y Botón de Acción Principal */}
-              <View style={styles.avatarBarra}>
-                <View style={styles.avatarWrap}>
-                  {perfil?.foto_url ? (
-                    <Image source={{ uri: perfil.foto_url }} style={styles.avatarImg} />
+            {/* Tarjeta de Perfil Estilo Red Social */}
+            <View style={styles.perfilCard}>
+              <View style={styles.perfilFilaSuperior}>
+                <TouchableOpacity onPress={cambiarFotoPerfil} style={styles.avatarWrap}>
+                  {perfil?.avatar_url ? (
+                    <Image source={{ uri: perfil.avatar_url }} style={styles.avatarImg} />
                   ) : (
                     <View style={styles.avatarPlaceholder}>
                       <Text style={styles.avatarLetra}>
@@ -273,244 +360,152 @@ export default function PerfilScreen() {
                       </Text>
                     </View>
                   )}
-                  {esMiPerfil && (
-                    <TouchableOpacity style={styles.camaraBadge} onPress={seleccionarFoto}>
-                      <Ionicons name="camera" size={13} color="#FFFFFF" />
-                    </TouchableOpacity>
-                  )}
-                </View>
-
-                {esMiPerfil ? (
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <TouchableOpacity
-                      style={styles.btnEditarPerfilTwitter}
-                      onPress={() => setModalEditarVisible(true)}
-                    >
-                      <Text style={styles.btnEditarPerfilTwitterTexto}>Editar perfil</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.btnSalirTwitter}
-                      onPress={async () => {
-                        await supabase.auth.signOut();
-                        router.replace('/login');
-                      }}
-                    >
-                      <Ionicons name="log-out-outline" size={18} color="#D9534F" />
-                    </TouchableOpacity>
+                  <View style={styles.badgeCamara}>
+                    <Ionicons name="camera" size={16} color="#FFFFFF" />
                   </View>
-                ) : (
-                  <TouchableOpacity
-                    style={[styles.btnEditarPerfilTwitter, { backgroundColor: '#4A3B32' }]}
-                    onPress={() => Alert.alert('Comunidad', 'Ya estás siguiendo la actividad de este cuidador.')}
-                  >
-                    <Text style={[styles.btnEditarPerfilTwitterTexto, { color: '#FFFFFF' }]}>Siguiendo</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-
-              {/* 3. Nombres y Biografía */}
-              <View style={styles.infoUsuario}>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <Text style={styles.nombreTwitter}>{perfil?.nombre || 'Cuidador Respiro'}</Text>
-                  {Boolean(perfil?.verificado) && (
-                    <Ionicons name="checkmark-circle" size={16} color="#1D9BF0" style={{ marginLeft: 5 }} />
-                  )}
-                </View>
-                <Text style={styles.handleTwitter}>{handleUsuario}</Text>
-
-                <Text style={styles.bioTwitter}>
-                  {perfil?.biografia || (esMiPerfil ? 'Presiona "Editar perfil" para agregar una biografía...' : 'Sin biografía disponible.')}
-                </Text>
-
-                {/* Métricas / Stats de Twitter */}
-                <View style={styles.statsFila}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 16 }}>
-                    <Text style={styles.statNumero}>{posts.length}</Text>
-                    <Text style={styles.statEtiqueta}> Posts</Text>
-                  </View>
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Ionicons name="heart" size={14} color="#D9534F" />
-                    <Text style={[styles.statNumero, { marginLeft: 4 }]}>
-                      {posts.reduce((acc, curr) => acc + (curr.totalLikes || 0), 0)}
-                    </Text>
-                    <Text style={styles.statEtiqueta}> Me gusta</Text>
-                  </View>
-                </View>
-              </View>
-
-              {/* 4. Barra de pestañas estilo Twitter */}
-              <View style={styles.twitterTabsBar}>
-                <TouchableOpacity
-                  style={[styles.twitterTabItem, tabActiva === 'posts' && styles.twitterTabItemActivo]}
-                  onPress={() => setTabActiva('posts')}
-                >
-                  <Text style={[styles.twitterTabTexto, tabActiva === 'posts' && styles.twitterTabTextoActivo]}>
-                    Posts
-                  </Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity
-                  style={[styles.twitterTabItem, tabActiva === 'respuestas' && styles.twitterTabItemActivo]}
-                  onPress={() => setTabActiva('respuestas')}
-                >
-                  <Text style={[styles.twitterTabTexto, tabActiva === 'respuestas' && styles.twitterTabTextoActivo]}>
-                    Respuestas
-                  </Text>
-                </TouchableOpacity>
+                <View style={{ flex: 1, marginLeft: 14 }}>
+                  <View style={styles.nombreFila}>
+                    <Text style={styles.perfilNombre}>{perfil?.nombre || 'Cuidador'}</Text>
+                    {perfil?.verificado && (
+                      <Ionicons
+                        name="checkmark-circle"
+                        size={22}
+                        color="#1B5E20"
+                        style={{ marginLeft: 6 }}
+                      />
+                    )}
+                  </View>
+
+                  <Text style={styles.perfilEmail}>{currentUser?.email}</Text>
+
+                  {perfil?.verificado && (
+                    <View style={styles.badgeVerificado}>
+                      <Text style={styles.badgeVerificadoTexto}>
+                        Perfil Profesional / Verificado
+                      </Text>
+                    </View>
+                  )}
+                </View>
               </View>
-            </View>
-          }
-          ListEmptyComponent={
-            <View style={styles.vacioContainer}>
-              <Ionicons name="newspaper-outline" size={40} color="#A0958E" />
-              <Text style={styles.vacioTexto}>
-                {tabActiva === 'posts'
-                  ? 'No hay publicaciones en este perfil.'
-                  : 'No hay respuestas registradas.'}
+
+              <Text style={styles.perfilBio}>
+                {perfil?.biografia?.trim()
+                  ? perfil.biografia
+                  : 'Cuidador activo en la comunidad Respiro.'}
               </Text>
-            </View>
-          }
-          renderItem={({ item }) => (
-            <View style={styles.tweetItem}>
-              {/* Avatar pequeño al lado izquierdo */}
-              <View style={styles.tweetAvatarCol}>
-                {perfil?.foto_url ? (
-                  <Image source={{ uri: perfil.foto_url }} style={styles.tweetAvatarImg} />
-                ) : (
-                  <View style={styles.tweetAvatarPlaceholder}>
-                    <Text style={styles.tweetAvatarLetra}>
-                      {perfil?.nombre ? perfil.nombre.charAt(0).toUpperCase() : 'C'}
-                    </Text>
-                  </View>
-                )}
-              </View>
 
-              {/* Contenido derecho */}
-              <View style={styles.tweetContenidoCol}>
-                <View style={styles.tweetHeaderFila}>
-                  <Text style={styles.tweetNombre} numberOfLines={1}>{perfil?.nombre || 'Cuidador'}</Text>
-                  <Text style={styles.tweetHandle} numberOfLines={1}> {handleUsuario}</Text>
-                  <Text style={styles.tweetFecha}>
-                    · {new Date(item.created_at).toLocaleDateString('es-CL', { day: 'numeric', month: 'short' })}
-                  </Text>
-                  {esMiPerfil && (
-                    <TouchableOpacity style={{ marginLeft: 'auto' }} onPress={() => eliminarPost(item.id)}>
-                      <Ionicons name="trash-outline" size={15} color="#A0958E" />
-                    </TouchableOpacity>
-                  )}
-                </View>
-
-                <Text style={styles.tweetTexto}>{item.contenido}</Text>
-
-                {/* Métricas del post */}
-                <View style={styles.tweetAccionesFila}>
-                  <View style={styles.tweetAccion}>
-                    <Ionicons name="chatbubble-outline" size={14} color="#8A7A70" />
-                    <Text style={styles.tweetAccionTexto}>{item.totalComentarios}</Text>
-                  </View>
-                  <View style={[styles.tweetAccion, { marginLeft: 24 }]}>
-                    <Ionicons name="heart-outline" size={15} color="#8A7A70" />
-                    <Text style={styles.tweetAccionTexto}>{item.totalLikes}</Text>
-                  </View>
-                </View>
-              </View>
-            </View>
-          )}
-        />
-      )}
-
-      {/* BOTÓN FLOTANTE ESTILO TWITTER (FAB) PARA PUBLICAR DIRECTAMENTE DESDE EL PERFIL */}
-      {esMiPerfil && (
-        <TouchableOpacity
-          style={styles.fabTwitter}
-          onPress={() => setModalPostVisible(true)}
-          activeOpacity={0.85}
-        >
-          <Ionicons name="pencil" size={24} color="#FFFFFF" />
-        </TouchableOpacity>
-      )}
-
-      {/* MODAL REDACTAR TWEET / POST */}
-      <Modal visible={modalPostVisible} animationType="slide">
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={{ flex: 1, backgroundColor: '#FFFFFF' }}
-        >
-          <View style={styles.modalTwitterHeader}>
-            <TouchableOpacity onPress={() => setModalPostVisible(false)}>
-              <Text style={styles.modalTwitterCancelar}>Cancelar</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.btnTwittear}
-              onPress={publicarDesdePerfil}
-              disabled={publicando}
-            >
-              {publicando ? (
-                <ActivityIndicator size="small" color="#FFFFFF" />
-              ) : (
-                <Text style={styles.btnTwittearTexto}>Publicar</Text>
-              )}
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.modalTwitterCuerpo}>
-            {perfil?.foto_url ? (
-              <Image source={{ uri: perfil.foto_url }} style={styles.modalTwitterAvatar} />
-            ) : (
-              <View style={styles.modalTwitterAvatarPlaceholder}>
-                <Text style={{ color: '#FFF', fontWeight: 'bold' }}>C</Text>
-              </View>
-            )}
-            <TextInput
-              style={styles.modalTwitterInput}
-              placeholder="¿Qué estás pensando hoy? Comparte con los demás cuidadores..."
-              placeholderTextColor="#A0958E"
-              multiline
-              autoFocus
-              value={nuevoPostTexto}
-              onChangeText={setNuevoPostTexto}
-            />
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
-
-      {/* MODAL EDITAR PERFIL */}
-      <Modal visible={modalEditarVisible} animationType="slide" transparent>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalBox}>
-            <View style={styles.modalBoxHeader}>
-              <Text style={styles.modalBoxTitulo}>Editar perfil</Text>
-              <TouchableOpacity onPress={() => setModalEditarVisible(false)}>
-                <Ionicons name="close" size={22} color="#4A3B32" />
+              <TouchableOpacity
+                style={styles.btnEditarPerfil}
+                onPress={() => setModalEditar(true)}
+              >
+                <Ionicons name="create-outline" size={20} color="#141414" />
+                <Text style={styles.btnEditarPerfilTexto}>Editar Nombre y Biografía</Text>
               </TouchableOpacity>
             </View>
 
-            <Text style={styles.labelInput}>Nombre completo</Text>
-            <TextInput
-              style={styles.inputModal}
-              value={editNombre}
-              onChangeText={setEditNombre}
-              placeholder="Ej: Constanza Araya"
-              placeholderTextColor="#A0958E"
-            />
+            {/* Caja para Publicar en el Muro */}
+            <View style={styles.cajaPublicar}>
+              <Text style={styles.cajaPublicarTitulo}>Compartir con la comunidad</Text>
+              <TextInput
+                style={styles.inputPublicacion}
+                placeholder="¿Cómo te sientes hoy o qué consejo quieres compartir?"
+                placeholderTextColor="#555555"
+                multiline
+                value={nuevaPublicacion}
+                onChangeText={setNuevaPublicacion}
+              />
+              <TouchableOpacity
+                style={styles.btnPublicar}
+                onPress={crearPublicacionPerfil}
+                disabled={publicando}
+              >
+                {publicando ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <>
+                    <Ionicons name="send" size={18} color="#FFFFFF" />
+                    <Text style={styles.btnPublicarTexto}>Publicar Mensaje</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
 
-            <Text style={styles.labelInput}>Biografía</Text>
-            <TextInput
-              style={[styles.inputModal, { minHeight: 70, textAlignVertical: 'top' }]}
-              value={editBio}
-              onChangeText={setEditBio}
-              placeholder="Cuéntanos un poco sobre tu rol o experiencia..."
-              placeholderTextColor="#A0958E"
-              multiline
-            />
+            <Text style={styles.seccionTitulo}>
+              Mis Publicaciones ({publicaciones.length})
+            </Text>
+          </View>
+        }
+        ListEmptyComponent={
+          <View style={styles.vacioCard}>
+            <Text style={styles.vacioTexto}>
+              Aún no has publicado mensajes en tu muro.
+            </Text>
+          </View>
+        }
+        renderItem={({ item }) => (
+          <View style={styles.postCard}>
+            <View style={styles.postHeader}>
+              <Text style={styles.postAutor}>{item.autor_nombre || perfil?.nombre}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Text style={styles.postFecha}>{formatearFecha(item.created_at)}</Text>
+                <TouchableOpacity
+                  onPress={() => eliminarPublicacion(item.id)}
+                  style={{ marginLeft: 10, padding: 4 }}
+                >
+                  <Ionicons name="trash" size={20} color="#B71C1C" />
+                </TouchableOpacity>
+              </View>
+            </View>
+            <Text style={styles.postContenido}>{item.contenido}</Text>
+          </View>
+        )}
+      />
 
-            <TouchableOpacity style={styles.btnGuardarModal} onPress={guardarPerfil} disabled={guardandoPerfil}>
-              {guardandoPerfil ? (
-                <ActivityIndicator color="#FFFFFF" />
-              ) : (
-                <Text style={styles.btnGuardarModalTexto}>Guardar</Text>
-              )}
-            </TouchableOpacity>
+      {/* MODAL EDITAR PERFIL */}
+      <Modal visible={modalEditar} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitulo}>Editar Mi Perfil</Text>
+              <TouchableOpacity onPress={() => setModalEditar(false)}>
+                <Ionicons name="close-circle" size={30} color="#141414" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <Text style={styles.label}>Nombre visible *</Text>
+              <TextInput
+                style={styles.input}
+                value={editNombre}
+                onChangeText={setEditNombre}
+                placeholder="Tu nombre"
+                placeholderTextColor="#555555"
+              />
+
+              <Text style={styles.label}>Biografía o presentación</Text>
+              <TextInput
+                style={[styles.input, { minHeight: 90, textAlignVertical: 'top' }]}
+                value={editBiografia}
+                onChangeText={setEditBiografia}
+                placeholder="Cuéntanos a quién cuidas o tu experiencia..."
+                placeholderTextColor="#555555"
+                multiline
+              />
+
+              <TouchableOpacity
+                style={styles.btnGuardarModal}
+                onPress={guardarCambiosPerfil}
+                disabled={guardandoPerfil}
+              >
+                {guardandoPerfil ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.btnGuardarModalTexto}>Guardar Cambios</Text>
+                )}
+              </TouchableOpacity>
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -519,61 +514,54 @@ export default function PerfilScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#FFFFFF' },
-  bannerHeader: { height: 110, backgroundColor: '#D9C4B2', position: 'relative', justifyContent: 'center' },
-  btnVolverAtras: { position: 'absolute', top: 38, left: 16, backgroundColor: 'rgba(0,0,0,0.4)', padding: 7, borderRadius: 20 },
-  avatarBarra: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', paddingHorizontal: 16, marginTop: -42 },
+  loaderContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F2ECE4', padding: 20 },
+  container: { flex: 1, backgroundColor: '#F2ECE4', paddingHorizontal: 16, paddingTop: 12 },
+
+  topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
+  tituloScreen: { fontSize: 26, fontWeight: '900', color: '#141414' },
+  btnCerrarSesion: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#B71C1C', paddingVertical: 8, paddingHorizontal: 14, borderRadius: 12 },
+  btnCerrarSesionTexto: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 15, marginLeft: 6 },
+
+  perfilCard: { backgroundColor: '#FFFFFF', borderRadius: 18, padding: 18, borderWidth: 2, borderColor: '#2C221E', marginBottom: 16 },
+  perfilFilaSuperior: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
   avatarWrap: { position: 'relative' },
-  avatarImg: { width: 84, height: 84, borderRadius: 42, borderWidth: 3, borderColor: '#FFFFFF' },
-  avatarPlaceholder: { width: 84, height: 84, borderRadius: 42, backgroundColor: '#C59A77', justifyContent: 'center', alignItems: 'center', borderWidth: 3, borderColor: '#FFFFFF' },
-  avatarLetra: { fontSize: 32, fontWeight: 'bold', color: '#FFFFFF' },
-  camaraBadge: { position: 'absolute', bottom: 2, right: 2, backgroundColor: '#4A3B32', padding: 6, borderRadius: 14, borderWidth: 1.5, borderColor: '#FFFFFF' },
-  btnEditarPerfilTwitter: { borderWidth: 1, borderColor: '#C59A77', paddingVertical: 6, paddingHorizontal: 16, borderRadius: 20 },
-  btnEditarPerfilTwitterTexto: { fontSize: 13, fontWeight: 'bold', color: '#4A3B32' },
-  btnSalirTwitter: { marginLeft: 10, padding: 6 },
-  infoUsuario: { paddingHorizontal: 16, marginTop: 8 },
-  nombreTwitter: { fontSize: 20, fontWeight: 'bold', color: '#14171A' },
-  handleTwitter: { fontSize: 13, color: '#657786', marginTop: 1 },
-  bioTwitter: { fontSize: 14, color: '#14171A', marginTop: 10, lineHeight: 20 },
-  statsFila: { flexDirection: 'row', marginTop: 12, alignItems: 'center' },
-  statNumero: { fontSize: 13, fontWeight: 'bold', color: '#14171A' },
-  statEtiqueta: { fontSize: 13, color: '#657786' },
-  twitterTabsBar: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: '#E1E8ED', marginTop: 14 },
-  twitterTabItem: { flex: 1, paddingVertical: 12, alignItems: 'center' },
-  twitterTabItemActivo: { borderBottomWidth: 3, borderBottomColor: '#C59A77' },
-  twitterTabTexto: { fontSize: 14, fontWeight: 'bold', color: '#657786' },
-  twitterTabTextoActivo: { color: '#4A3B32' },
-  tweetItem: { flexDirection: 'row', padding: 14, borderBottomWidth: 1, borderBottomColor: '#F2F2F2' },
-  tweetAvatarCol: { marginRight: 10 },
-  tweetAvatarImg: { width: 40, height: 40, borderRadius: 20 },
-  tweetAvatarPlaceholder: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#C59A77', justifyContent: 'center', alignItems: 'center' },
-  tweetAvatarLetra: { color: '#FFF', fontWeight: 'bold' },
-  tweetContenidoCol: { flex: 1 },
-  tweetHeaderFila: { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
-  tweetNombre: { fontSize: 14, fontWeight: 'bold', color: '#14171A', maxWidth: '40%' },
-  tweetHandle: { fontSize: 13, color: '#657786', maxWidth: '30%' },
-  tweetFecha: { fontSize: 12, color: '#657786' },
-  tweetTexto: { fontSize: 14, color: '#14171A', lineHeight: 20, marginBottom: 8 },
-  tweetAccionesFila: { flexDirection: 'row', alignItems: 'center' },
-  tweetAccion: { flexDirection: 'row', alignItems: 'center' },
-  tweetAccionTexto: { fontSize: 12, color: '#657786', marginLeft: 5 },
-  vacioContainer: { alignItems: 'center', padding: 40 },
-  vacioTexto: { fontSize: 14, color: '#8A7A70', marginTop: 8 },
-  fabTwitter: { position: 'absolute', bottom: 20, right: 20, backgroundColor: '#C59A77', width: 56, height: 56, borderRadius: 28, justifyContent: 'center', alignItems: 'center', elevation: 5, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 3 },
-  modalTwitterHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingTop: 45, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: '#E1E8ED' },
-  modalTwitterCancelar: { fontSize: 15, color: '#657786' },
-  btnTwittear: { backgroundColor: '#C59A77', paddingVertical: 6, paddingHorizontal: 16, borderRadius: 18 },
-  btnTwittearTexto: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 14 },
-  modalTwitterCuerpo: { flexDirection: 'row', padding: 16 },
-  modalTwitterAvatar: { width: 38, height: 38, borderRadius: 19, marginRight: 12 },
-  modalTwitterAvatarPlaceholder: { width: 38, height: 38, borderRadius: 19, backgroundColor: '#C59A77', justifyContent: 'center', alignItems: 'center', marginRight: 12 },
-  modalTwitterInput: { flex: 1, fontSize: 16, color: '#14171A', textAlignVertical: 'top', minHeight: 180 },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 },
-  modalBox: { backgroundColor: '#FFFFFF', borderRadius: 16, padding: 18 },
-  modalBoxHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  modalBoxTitulo: { fontSize: 17, fontWeight: 'bold', color: '#4A3B32' },
-  labelInput: { fontSize: 12, fontWeight: 'bold', color: '#8A7A70', marginTop: 10, marginBottom: 4 },
-  inputModal: { backgroundColor: '#F8F9FA', borderWidth: 1, borderColor: '#E1E8ED', borderRadius: 10, padding: 10, fontSize: 14 },
-  btnGuardarModal: { backgroundColor: '#C59A77', borderRadius: 10, paddingVertical: 12, alignItems: 'center', marginTop: 16 },
-  btnGuardarModalTexto: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 14 },
+  avatarImg: { width: 72, height: 72, borderRadius: 36, borderWidth: 2, borderColor: '#2C221E' },
+  avatarPlaceholder: { width: 72, height: 72, borderRadius: 36, backgroundColor: '#2C221E', justifyContent: 'center', alignItems: 'center' },
+  avatarLetra: { fontSize: 30, fontWeight: 'bold', color: '#FFFFFF' },
+  badgeCamara: { position: 'absolute', bottom: 0, right: 0, backgroundColor: '#2C221E', width: 28, height: 28, borderRadius: 14, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#FFFFFF' },
+
+  nombreFila: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' },
+  perfilNombre: { fontSize: 21, fontWeight: 'bold', color: '#141414' },
+  perfilEmail: { fontSize: 14, fontWeight: '600', color: '#333333', marginTop: 2 },
+  badgeVerificado: { alignSelf: 'flex-start', backgroundColor: '#E8F5E9', borderWidth: 1.5, borderColor: '#1B5E20', paddingVertical: 3, paddingHorizontal: 8, borderRadius: 8, marginTop: 6 },
+  badgeVerificadoTexto: { fontSize: 13, fontWeight: 'bold', color: '#1B5E20' },
+
+  perfilBio: { fontSize: 16, color: '#141414', lineHeight: 23, marginBottom: 14, backgroundColor: '#F2ECE4', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#6E5D4F' },
+  btnEditarPerfil: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#F2ECE4', borderWidth: 2, borderColor: '#2C221E', paddingVertical: 12, borderRadius: 12 },
+  btnEditarPerfilTexto: { fontSize: 16, fontWeight: 'bold', color: '#141414', marginLeft: 8 },
+
+  cajaPublicar: { backgroundColor: '#FFFFFF', borderRadius: 18, padding: 16, borderWidth: 2, borderColor: '#6E5D4F', marginBottom: 18 },
+  cajaPublicarTitulo: { fontSize: 17, fontWeight: 'bold', color: '#141414', marginBottom: 8 },
+  inputPublicacion: { backgroundColor: '#F2ECE4', borderWidth: 2, borderColor: '#2C221E', borderRadius: 12, padding: 12, fontSize: 16, color: '#141414', minHeight: 80, textAlignVertical: 'top' },
+  btnPublicar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#2C221E', paddingVertical: 13, borderRadius: 12, marginTop: 12 },
+  btnPublicarTexto: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 16, marginLeft: 8 },
+
+  seccionTitulo: { fontSize: 19, fontWeight: 'bold', color: '#141414', marginBottom: 12 },
+  vacioCard: { backgroundColor: '#FFFFFF', borderRadius: 14, padding: 24, alignItems: 'center', borderWidth: 1.5, borderColor: '#6E5D4F' },
+  vacioTexto: { fontSize: 16, color: '#2B2B2B', textAlign: 'center' },
+
+  postCard: { backgroundColor: '#FFFFFF', borderRadius: 16, padding: 16, marginBottom: 12, borderWidth: 2, borderColor: '#6E5D4F' },
+  postHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, borderBottomWidth: 1, borderBottomColor: '#E0D6CC', paddingBottom: 6 },
+  postAutor: { fontSize: 16, fontWeight: 'bold', color: '#141414' },
+  postFecha: { fontSize: 13, fontWeight: '600', color: '#333333' },
+  postContenido: { fontSize: 16, color: '#141414', lineHeight: 24 },
+
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.65)', justifyContent: 'center', padding: 16 },
+  modalCard: { backgroundColor: '#FFFFFF', borderRadius: 18, padding: 20, maxHeight: '85%', borderWidth: 2, borderColor: '#141414' },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  modalTitulo: { fontSize: 20, fontWeight: 'bold', color: '#141414' },
+  label: { fontSize: 15, fontWeight: 'bold', color: '#141414', marginTop: 12, marginBottom: 6 },
+  input: { backgroundColor: '#F2ECE4', borderWidth: 2, borderColor: '#2C221E', borderRadius: 12, padding: 12, fontSize: 16, color: '#141414' },
+  btnGuardarModal: { backgroundColor: '#2C221E', borderRadius: 14, paddingVertical: 14, alignItems: 'center', marginTop: 20, marginBottom: 10 },
+  btnGuardarModalTexto: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 17 },
 });
